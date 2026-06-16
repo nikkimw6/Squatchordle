@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bigfoot Runner - Daily Goals Edition</title>
+  <style>
+    body {
+      margin: 0;
+      background: #87ceeb;
+      font-family: system-ui, sans-serif;
+      user-select: none;
+      overflow: hidden;
+    }
+    #gameContainer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 100vh;
+    }
+    canvas {
+      background: linear-gradient(#b3e6ff 0%, #b3e6ff 60%, #4caf50 60%, #2e7d32 100%);
+      border: 3px solid #2e3b4e;
+      margin-top: 10px;
+      touch-action: manipulation;
+    }
+    #ui {
+      margin-top: 6px;
+      color: #123;
+      font-size: 14px;
+      text-align: center;
+    }
+    #ui span {
+      margin: 0 8px;
+    }
+    #message {
+      margin-top: 4px;
+      font-weight: 600;
+      color: #b71c1c;
+      min-height: 18px;
+    }
+    #powerupsInfo {
+      margin-top: 2px;
+      font-size: 12px;
+      color: #1b5e20;
+      min-height: 16px;
+    }
+    #hint {
+      margin-top: 2px;
+      font-size: 12px;
+      color: #333;
+    }
+    button {
+      margin-left: 6px;
+      padding: 4px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #shopPanel, #goalsPanel {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #ffffff;
+      border: 2px solid #2e3b4e;
+      padding: 10px;
+      width: 340px;
+      max-height: 70vh;
+      overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      display: none;
+      z-index: 10;
+    }
+    #shopPanel h3, #goalsPanel h3 {
+      margin: 0 0 6px;
+      font-size: 16px;
+    }
+    #shopItems, #goalsList {
+      font-size: 13px;
+    }
+    .shop-item {
+      border-bottom: 1px solid #ddd;
+      padding: 4px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .shop-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .shop-desc {
+      font-size: 11px;
+      color: #444;
+    }
+    .goal-item {
+      border-bottom: 1px solid #ddd;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+    .goal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .goal-progress {
+      font-size: 11px;
+      color: #555;
+    }
+    .goal-completed {
+      color: #2e7d32;
+      font-weight: 600;
+      font-size: 11px;
+    }
+    #shopClose, #goalsClose {
+      margin-top: 6px;
+      float: right;
+    }
+  </style>
+</head>
+<body>
+<div id="gameContainer">
+  <div id="ui">
+    <div>
+      <span>Score: <span id="score">0</span></span>
+      <span>High Score: <span id="highScore">0</span></span>
+      <span>Total Points: <span id="points">0</span></span>
+      <button id="restartBtn">Restart</button>
+      <button id="shopBtn">Shop</button>
+      <button id="goalsBtn">Goals</button>
+    </div>
+    <div id="message"></div>
+    <div id="powerupsInfo"></div>
+    <div id="hint">Space/↑ or tap to jump. Green = food, Blue = powerups, Red = hazards. Skins & daily goals give perks.</div>
+  </div>
+  <canvas id="game" width="800" height="300"></canvas>
+</div>
+
+<div id="shopPanel">
+  <h3>Bigfoot Shop</h3>
+  <div style="font-size:12px;margin-bottom:4px;">
+    Spend total points to unlock skins. Each has a small gameplay perk.
+  </div>
+  <div id="shopItems"></div>
+  <button id="shopClose">Close</button>
+</div>
+
+<div id="goalsPanel">
+  <h3>Daily Goals</h3>
+  <div id="goalsHeader" style="font-size:12px;margin-bottom:4px;"></div>
+  <div id="goalsList"></div>
+  <button id="goalsClose">Close</button>
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  const scoreEl = document.getElementById('score');
+  const highScoreEl = document.getElementById('highScore');
+  const pointsEl = document.getElementById('points');
+  const messageEl = document.getElementById('message');
+  const powerupsInfoEl = document.getElementById('powerupsInfo');
+  const restartBtn = document.getElementById('restartBtn');
+  const shopBtn = document.getElementById('shopBtn');
+  const shopPanel = document.getElementById('shopPanel');
+  const shopItemsEl = document.getElementById('shopItems');
+  const shopClose = document.getElementById('shopClose');
+  const goalsBtn = document.getElementById('goalsBtn');
+  const goalsPanel = document.getElementById('goalsPanel');
+  const goalsHeaderEl = document.getElementById('goalsHeader');
+  const goalsListEl = document.getElementById('goalsList');
+  const goalsClose = document.getElementById('goalsClose');
+
+  const GROUND_Y = 240;
+  const BASE_GRAVITY = 0.6;
+  const BASE_SPEED = 5;
+  const JUMP_VELOCITY_BASE = -11;
+
+  let gravity = BASE_GRAVITY;
+  let baseGameSpeed = BASE_SPEED;
+  let gameSpeed = baseGameSpeed;
+  let spawnTimer = 0;
+  let score = 0;
+  let highScore = Number(localStorage.getItem('bigfootHighScore') || 0);
+  highScoreEl.textContent = highScore;
+
+  let playerData = loadPlayerData();
+
+  function loadPlayerData() {
+    const saved = localStorage.getItem('bigfootPlayerData');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return {
+      points: 0,
+      owned: [],
+      equipped: {
+        hat: null,
+        sunglasses: null,
+        board: null,
+        cape: null,
+        shirt: null,
+        pants: null,
+        floatie: null
+      }
+    };
+  }
+
+  function savePlayerData() {
+    localStorage.setItem('bigfootPlayerData', JSON.stringify(playerData));
+    pointsEl.textContent = playerData.points;
+  }
+
+  pointsEl.textContent = playerData.points;
+
+  const bigfoot = {
+    x: 80,
+    y: GROUND_Y - 40,
+    width: 40,
+    height: 40,
+    vy: 0,
+    onGround: true
+  };
+
+  const objects = [];
+
+  const FOOD_TYPES = [
+    'hamburger', 'hotdog', 'smore', 'soda', 'sandwich', 'apple', 'candy'
+  ];
+  const HAZARD_TYPES = [
+    'campfire', 'lantern', 'tent', 'flashlight', 'ranger'
+  ];
+  const POWERUP_TYPES = [
+    'shield', 'magnet', 'speed'
+  ];
+
+  const FOOD_SCORE = {
+    hamburger: 10,
+    hotdog: 10,
+    smore: 15,
+    soda: 5,
+    sandwich: 10,
+    apple: 5,
+    candy: 15
+  };
+
+  const itemPerks = {
+    cowboy_hat: { jumpBoost: 1.05 },
+    beanie: { fallSlow: 0.95 },
+    aviators: { bonusFoodPoints: 2 },
+    retro_shades: { comboThreshold: 4 },
+    skateboard: { speedBoost: 1.05 },
+    roller_skates: { hazardRate: 0.95 },
+    super_cape: { slowFallAfterJump: true },
+    wind_cape: { passivePoints: 1 },
+    flannel_shirt: { foodBonusTypes: ['apple', 'sandwich'], foodBonus: 3 },
+    track_pants: { frenzyBoost: 1.1 },
+    floatie_duck: { hazardProtection: true }
+  };
+
+  function getPerk(id) {
+    return itemPerks[id] || {};
+  }
+
+  let shieldActive = false;
+  let shieldTimer = 0;
+
+  let magnetActive = false;
+  let magnetTimer = 0;
+
+  let speedActive = false;
+  let speedTimer = 0;
+
+  let comboCount = 0;
+  let snackFrenzyActive = false;
+  let snackFrenzyTimer = 0;
+
+  let slowFallTimer = 0;
+  let passivePointsTimer = 0;
+  let floatieProtectionAvailable = false;
+
+  let dailyGoals = null;
+  let runTimeSeconds = 0;
+  let runDistance = 0;
+
+  let gameOver = false;
+  let lastTime = 0;
+
+  const shopItems = [
+    { id: 'cowboy_hat', name: 'Cowboy Hat', price: 150, slot: 'hat', desc: '+5% jump height' },
+    { id: 'beanie', name: 'Beanie', price: 120, slot: 'hat', desc: '5% slower fall' },
+    { id: 'aviators', name: 'Aviator Sunglasses', price: 200, slot: 'sunglasses', desc: '+2 pts per food' },
+    { id: 'retro_shades', name: 'Retro Shades', price: 250, slot: 'sunglasses', desc: 'Snack Frenzy at 4 foods' },
+    { id: 'skateboard', name: 'Skateboard', price: 500, slot: 'board', desc: '+5% base speed' },
+    { id: 'roller_skates', name: 'Roller Skates', price: 450, slot: 'board', desc: 'Fewer hazards' },
+    { id: 'super_cape', name: 'Super Cape', price: 600, slot: 'cape', desc: 'Slow fall after jump' },
+    { id: 'wind_cape', name: 'Wind Cape', price: 650, slot: 'cape', desc: '+1 pt every 5s' },
+    { id: 'flannel_shirt', name: 'Flannel Shirt', price: 220, slot: 'shirt', desc: 'Apples & sandwiches +3 pts' },
+    { id: 'track_pants', name: 'Track Pants', price: 260, slot: 'pants', desc: 'Snack Frenzy lasts longer' },
+    { id: 'floatie_duck', name: 'Duck Floatie', price: 400, slot: 'floatie', desc: 'Ignore one hazard hit' }
+  ];
+
+  const goalPool = [
+    { type: 'collect_food', description: 'Collect 30 foods', target: 30, reward: 100 },
+    { type: 'collect_food', description: 'Collect 50 foods', target: 50, reward: 150 },
+    { type: 'jump', description: 'Jump 50 times', target: 50, reward: 100 },
+    { type: 'jump', description: 'Jump 80 times', target: 80, reward: 150 },
+    { type: 'survive', description: 'Survive 60 seconds in one run', target: 60, reward: 120 },
+    { type: 'survive', description: 'Survive 90 seconds in one run', target: 90, reward: 160 },
+    { type: 'powerup', description: 'Collect 5 power-ups', target: 5, reward: 120 },
+    { type: 'frenzy', description: 'Trigger Snack Frenzy 3 times', target: 3, reward: 150 },
+    { type: 'distance', description: 'Run 2000 meters', target: 2000, reward: 120 }
+  ];
+
+  function todayString() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function yesterdayString() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function loadDailyGoals() {
+    const saved = localStorage.getItem('bigfootDailyGoals');
+    const today = todayString();
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        if (data.date === today) {
+          dailyGoals = data;
+          return;
+        } else {
+          generateDailyGoals(data);
+          return;
+        }
+      } catch (e) {}
+    }
+    generateDailyGoals(null);
+  }
+
+  function generateDailyGoals(previous) {
+    const today = todayString();
+    let streak = 0;
+    if (previous) {
+      const wasYesterday = previous.date === yesterdayString();
+      const allCompleted = previous.goals && previous.goals.every(g => g.completed);
+      if (wasYesterday && allCompleted) {
+        streak = (previous.streak || 0) + 1;
+      } else {
+        streak = 0;
+      }
+    }
+    const goals = pickThreeRandomGoals();
+    dailyGoals = {
+      date: today,
+      streak: streak,
+      goals: goals,
+      streakRewardGiven: false
+    };
+    saveDailyGoals();
+  }
+
+  function pickThreeRandomGoals() {
+    const pool = goalPool.slice();
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, 3).map((g, idx) => ({
+      id: g.type + '_' + idx,
+      type: g.type,
+      description: g.description,
+      target: g.target,
+      progress: 0,
+      reward: g.reward,
+      completed: false
+    }));
+  }
+
+  function saveDailyGoals() {
+    localStorage.setItem('bigfootDailyGoals', JSON.stringify(dailyGoals));
+  }
+
+  function calculateStreakBonus(streak) {
+    if (streak <= 1) return 50;
+    if (streak === 2) return 75;
+    if (streak === 3) return 100;
+    if (streak === 4) return 150;
+    if (streak === 5) return 200;
+    return 250;
+  }
+
+  function updateDailyProgress(eventType, amount) {
+    if (!dailyGoals) return;
+    let anyChange = false;
+
+    dailyGoals.goals.forEach(goal => {
+      if (goal.completed) return;
+
+      switch (goal.type) {
+        case 'collect_food':
+          if (eventType === 'food') {
+            goal.progress += amount;
+            anyChange = true;
+          }
+          break;
+        case 'jump':
+          if (eventType === 'jump') {
+            goal.progress += amount;
+            anyChange = true;
+          }
+          break;
+        case 'survive':
+          if (eventType === 'survive') {
+            const val = Math.floor(amount);
+            if (val > goal.progress) {
+              goal.progress = Math.min(goal.target, val);
+              anyChange = true;
+            }
+          }
+          break;
+        case 'powerup':
+          if (eventType === 'powerup') {
+            goal.progress += amount;
+            anyChange = true;
+          }
+          break;
+        case 'frenzy':
+          if (eventType === 'frenzy') {
+            goal.progress += amount;
+            anyChange = true;
+          }
+          break;
+        case 'distance':
+          if (eventType === 'distance') {
+            goal.progress = Math.min(goal.target, goal.progress + amount);
+            anyChange = true;
+          }
+          break;
+      }
+
+      if (goal.progress >= goal.target && !goal.completed) {
+        goal.completed = true;
+        playerData.points += goal.reward;
+        savePlayerData();
+        showPopup('Daily Goal Complete!', '+' + goal.reward + ' pts');
+      }
+    });
+
+    if (!dailyGoals.streakRewardGiven && dailyGoals.goals.every(g => g.completed)) {
+      dailyGoals.streak = (dailyGoals.streak || 0) + 0;
+      const bonus = calculateStreakBonus(dailyGoals.streak);
+      playerData.points += bonus;
+      savePlayerData();
+      dailyGoals.streakRewardGiven = true;
+      showPopup('Streak Bonus!', '+' + bonus + ' pts');
+    }
+
+    if (anyChange) {
+      saveDailyGoals();
+    }
+  }
+
+  function renderGoalsPanel() {
+    if (!dailyGoals) return;
+    const dateStr = dailyGoals.date;
+    const streak = dailyGoals.streak || 0;
+    goalsHeaderEl.textContent = `Today: ${dateStr}  |  Daily Streak: ${streak} day${streak === 1 ? '' : 's'}`;
+
+    goalsListEl.innerHTML = '';
+    dailyGoals.goals.forEach(goal => {
+      const row = document.createElement('div');
+      row.className = 'goal-item';
+
+      const header = document.createElement('div');
+      header.className = 'goal-header';
+
+      const desc = document.createElement('span');
+      desc.textContent = goal.description;
+
+      const reward = document.createElement('span');
+      reward.textContent = `Reward: ${goal.reward} pts`;
+
+      header.appendChild(desc);
+      header.appendChild(reward);
+
+      const progress = document.createElement('div');
+      progress.className = 'goal-progress';
+      progress.textContent = `${Math.min(goal.progress, goal.target)}/${goal.target}`;
+
+      row.appendChild(header);
+      row.appendChild(progress);
+
+      if (goal.completed) {
+        const done = document.createElement('div');
+        done.className = 'goal-completed';
+        done.textContent = 'Completed ✓';
+        row.appendChild(done);
+      }
+
+      goalsListEl.appendChild(row);
+    });
+  }
+
+  function showPopup(text, extra) {
+    messageEl.textContent = extra ? `${text} ${extra}` : text;
+    setTimeout(() => {
+      if (!gameOver) {
+        messageEl.textContent = '';
+      }
+    }, 2000);
+  }
+
+  function applyEquippedPerks() {
+    const hatPerk = getPerk(playerData.equipped.hat);
+    const boardPerk = getPerk(playerData.equipped.board);
+    const floatiePerk = getPerk(playerData.equipped.floatie);
+
+    gravity = BASE_GRAVITY * (hatPerk.fallSlow || 1);
+    baseGameSpeed = BASE_SPEED * (boardPerk.speedBoost || 1);
+    gameSpeed = baseGameSpeed;
+
+    floatieProtectionAvailable = !!floatiePerk.hazardProtection;
+
+    passivePointsTimer = 0;
+    slowFallTimer = 0;
+  }
+
+  function resetGame() {
+    applyEquippedPerks();
+
+    score = 0;
+    scoreEl.textContent = score;
+    spawnTimer = 0;
+    bigfoot.y = GROUND_Y - bigfoot.height;
+    bigfoot.vy = 0;
+    bigfoot.onGround = true;
+    objects.length = 0;
+    gameOver = false;
+    messageEl.textContent = '';
+
+    shieldActive = false;
+    shieldTimer = 0;
+    magnetActive = false;
+    magnetTimer = 0;
+    speedActive = false;
+    speedTimer = 0;
+    comboCount = 0;
+    snackFrenzyActive = false;
+    snackFrenzyTimer = 0;
+    slowFallTimer = 0;
+    passivePointsTimer = 0;
+    runTimeSeconds = 0;
+    runDistance = 0;
+  }
+
+  function spawnObject() {
+    const boardPerk = getPerk(playerData.equipped.board);
+    const hazardRateFactor = boardPerk.hazardRate || 1;
+
+    const r = Math.random();
+    let hazardThreshold = 0.8 * hazardRateFactor;
+
+    if (r < 0.55) {
+      const type = FOOD_TYPES[Math.floor(Math.random() * FOOD_TYPES.length)];
+      const y = GROUND_Y - 60 - Math.random() * 40;
+      objects.push({
+        type,
+        kind: 'food',
+        x: canvas.width + 20,
+        y,
+        width: 24,
+        height: 24
+      });
+    } else if (r < hazardThreshold) {
+      const type = HAZARD_TYPES[Math.floor(Math.random() * HAZARD_TYPES.length)];
+      const y = GROUND_Y - 30;
+      objects.push({
+        type,
+        kind: 'hazard',
+        x: canvas.width + 20,
+        y,
+        width: 26,
+        height: 30
+      });
+    } else {
+      const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+      const y = GROUND_Y - 70 - Math.random() * 30;
+      objects.push({
+        type,
+        kind: 'powerup',
+        x: canvas.width + 20,
+        y,
+        width: 22,
+        height: 22
+      });
+    }
+  }
+
+  function update(delta) {
+    if (gameOver) return;
+
+    const hatPerk = getPerk(playerData.equipped.hat);
+    const capePerk = getPerk(playerData.equipped.cape);
+
+    gameSpeed += 0.0008 * delta;
+
+    if (shieldActive) {
+      shieldTimer -= delta;
+      if (shieldTimer <= 0) shieldActive = false;
+    }
+    if (magnetActive) {
+      magnetTimer -= delta;
+      if (magnetTimer <= 0) magnetActive = false;
+    }
+    if (speedActive) {
+      speedTimer -= delta;
+      if (speedTimer <= 0) {
+        speedActive = false;
+        gameSpeed = baseGameSpeed + (gameSpeed - baseGameSpeed) * 0.5;
+      }
+    }
+    if (snackFrenzyActive) {
+      snackFrenzyTimer -= delta;
+      if (snackFrenzyTimer <= 0) {
+        snackFrenzyActive = false;
+        comboCount = 0;
+      }
+    }
+
+    if (capePerk.passivePoints) {
+      passivePointsTimer += delta;
+      if (passivePointsTimer >= 5000) {
+        passivePointsTimer -= 5000;
+        score += capePerk.passivePoints;
+        scoreEl.textContent = score;
+      }
+    }
+
+    if (slowFallTimer > 0 && capePerk.slowFallAfterJump) {
+      slowFallTimer -= delta;
+      gravity = BASE_GRAVITY * 0.6 * (hatPerk.fallSlow || 1);
+    } else {
+      gravity = BASE_GRAVITY * (hatPerk.fallSlow || 1);
+    }
+
+    bigfoot.vy += gravity;
+    bigfoot.y += bigfoot.vy;
+
+    if (bigfoot.y + bigfoot.height >= GROUND_Y) {
+      bigfoot.y = GROUND_Y - bigfoot.height;
+      bigfoot.vy = 0;
+      bigfoot.onGround = true;
+    }
+
+    runTimeSeconds += delta / 1000;
+    runDistance += gameSpeed * (delta / 16);
+    updateDailyProgress('survive', runTimeSeconds);
+    updateDailyProgress('distance', gameSpeed * (delta / 16));
+
+    spawnTimer -= delta;
+    if (spawnTimer <= 0) {
+      spawnObject();
+      spawnTimer = 800 + Math.random() * 600;
+    }
+
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const o = objects[i];
+
+      if (magnetActive && o.kind === 'food') {
+        const dx = (bigfoot.x + bigfoot.width / 2) - (o.x + o.width / 2);
+        const dy = (bigfoot.y + bigfoot.height / 2) - (o.y + o.height / 2);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 160 && dist > 0) {
+          o.x += (dx / dist) * 2;
+          o.y += (dy / dist) * 2;
+        } else {
+          o.x -= gameSpeed;
+        }
+      } else {
+        o.x -= gameSpeed;
+      }
+
+      if (o.x + o.width < 0) {
+        if (o.kind === 'hazard') {
+          updateDailyProgress('distance', 0);
+        }
+        objects.splice(i, 1);
+        continue;
+      }
+
+      if (rectsOverlap(bigfoot, o)) {
+        if (o.kind === 'food') {
+          handleFoodPickup(o);
+          objects.splice(i, 1);
+        } else if (o.kind === 'hazard') {
+          handleHazardHit(o, i);
+        } else if (o.kind === 'powerup') {
+          handlePowerupPickup(o);
+          objects.splice(i, 1);
+        }
+      }
+    }
+
+    updatePowerupsInfo();
+  }
+
+  function handleFoodPickup(o) {
+    const sunglassesPerk = getPerk(playerData.equipped.sunglasses);
+    const shirtPerk = getPerk(playerData.equipped.shirt);
+
+    let base = FOOD_SCORE[o.type] || 5;
+    if (snackFrenzyActive) base *= 2;
+
+    if (sunglassesPerk.bonusFoodPoints) {
+      base += sunglassesPerk.bonusFoodPoints;
+    }
+
+    if (shirtPerk.foodBonusTypes && shirtPerk.foodBonusTypes.includes(o.type)) {
+      base += shirtPerk.foodBonus || 0;
+    }
+
+    score += base;
+    scoreEl.textContent = score;
+
+    updateDailyProgress('food', 1);
+
+    const sunglassesPerk2 = getPerk(playerData.equipped.sunglasses);
+    const comboThreshold = sunglassesPerk2.comboThreshold || 5;
+    comboCount++;
+    if (comboCount >= comboThreshold && !snackFrenzyActive) {
+      const pantsPerk = getPerk(playerData.equipped.pants);
+      const frenzyBoost = pantsPerk.frenzyBoost || 1;
+      snackFrenzyActive = true;
+      snackFrenzyTimer = 5000 * frenzyBoost;
+      updateDailyProgress('frenzy', 1);
+    }
+  }
+
+  function handleHazardHit(o, index) {
+    if (shieldActive) {
+      shieldActive = false;
+      objects.splice(index, 1);
+      return;
+    }
+    if (floatieProtectionAvailable) {
+      floatieProtectionAvailable = false;
+      objects.splice(index, 1);
+      return;
+    }
+    triggerGameOver(o.type);
+  }
+
+  function handlePowerupPickup(o) {
+    if (o.type === 'shield') {
+      shieldActive = true;
+      shieldTimer = 8000;
+    } else if (o.type === 'magnet') {
+      magnetActive = true;
+      magnetTimer = 6000;
+    } else if (o.type === 'speed') {
+      speedActive = true;
+      speedTimer = 5000;
+      gameSpeed += 2;
+    }
+    updateDailyProgress('powerup', 1);
+  }
+
+  function updatePowerupsInfo() {
+    const active = [];
+    if (shieldActive) active.push('Shield');
+    if (magnetActive) active.push('Magnet');
+    if (speedActive) active.push('Speed Boost');
+    if (snackFrenzyActive) active.push('Snack Frenzy (x2 points)');
+    powerupsInfoEl.textContent = active.length ? 'Active: ' + active.join(', ') : '';
+  }
+
+  function rectsOverlap(a, b) {
+    return !(
+      a.x + a.width < b.x ||
+      a.x > b.x + b.width ||
+      a.y + a.height < b.y ||
+      a.y > b.y + b.height
+    );
+  }
+
+  function triggerGameOver(hazardType) {
+    gameOver = true;
+    messageEl.textContent = 'BIGFOOT SPOTTED! (' + hazardType.toUpperCase() + ')';
+
+    playerData.points += Math.floor(score / 2);
+    savePlayerData();
+
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('bigfootHighScore', highScore);
+      highScoreEl.textContent = highScore;
+    }
+  }
+
+  function drawBackground() {
+    for (let i = 0; i < 6; i++) {
+      const x = (i * 150 + (Date.now() / 20)) % (canvas.width + 150) - 150;
+      ctx.fillStyle = '#2e7d32';
+      ctx.fillRect(x + 40, 120, 30, 80);
+      ctx.beginPath();
+      ctx.fillStyle = '#1b5e20';
+      ctx.moveTo(x + 55, 60);
+      ctx.lineTo(x + 20, 130);
+      ctx.lineTo(x + 90, 130);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = '#1b5e20';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_Y + 0.5);
+    ctx.lineTo(canvas.width, GROUND_Y + 0.5);
+    ctx.stroke();
+  }
+
+  function drawBigfoot() {
+    ctx.fillStyle = '#5d4037';
+    ctx.fillRect(bigfoot.x, bigfoot.y, bigfoot.width, bigfoot.height);
+
+    if (playerData.equipped.shirt === 'flannel_shirt') {
+      ctx.fillStyle = '#8d6e63';
+      ctx.fillRect(bigfoot.x, bigfoot.y + 16, bigfoot.width, 16);
+    }
+
+    if (playerData.equipped.pants === 'track_pants') {
+      ctx.fillStyle = '#1e88e5';
+      ctx.fillRect(bigfoot.x, bigfoot.y + 28, bigfoot.width, 12);
+    }
+
+    ctx.fillStyle = '#d7ccc8';
+    ctx.fillRect(bigfoot.x + 8, bigfoot.y + 8, 24, 18);
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(bigfoot.x + 13, bigfoot.y + 13, 3, 3);
+    ctx.fillRect(bigfoot.x + 24, bigfoot.y + 13, 3, 3);
+
+    ctx.fillStyle = '#3e2723';
+    ctx.fillRect(bigfoot.x + 15, bigfoot.y + 20, 10, 3);
+
+    if (playerData.equipped.hat === 'cowboy_hat') {
+      ctx.fillStyle = '#8d6e63';
+      ctx.fillRect(bigfoot.x + 4, bigfoot.y - 10, 32, 8);
+    } else if (playerData.equipped.hat === 'beanie') {
+      ctx.fillStyle = '#3949ab';
+      ctx.fillRect(bigfoot.x + 6, bigfoot.y - 8, 28, 8);
+    }
+
+    if (playerData.equipped.sunglasses === 'aviators') {
+      ctx.fillStyle = 'black';
+      ctx.fillRect(bigfoot.x + 10, bigfoot.y + 12, 20, 6);
+    } else if (playerData.equipped.sunglasses === 'retro_shades') {
+      ctx.fillStyle = '#ff5722';
+      ctx.fillRect(bigfoot.x + 9, bigfoot.y + 12, 22, 6);
+    }
+
+    if (playerData.equipped.board === 'skateboard') {
+      ctx.fillStyle = '#4e342e';
+      ctx.fillRect(bigfoot.x - 4, bigfoot.y + bigfoot.height, bigfoot.width + 8, 6);
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(bigfoot.x + 6, bigfoot.y + bigfoot.height + 6, 3, 0, Math.PI * 2);
+      ctx.arc(bigfoot.x + bigfoot.width - 6, bigfoot.y + bigfoot.height + 6, 3, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (playerData.equipped.board === 'roller_skates') {
+      ctx.fillStyle = '#fbc02d';
+      ctx.fillRect(bigfoot.x + 6, bigfoot.y + bigfoot.height - 4, 10, 4);
+      ctx.fillRect(bigfoot.x + 22, bigfoot.y + bigfoot.height - 4, 10, 4);
+    }
+
+    if (playerData.equipped.cape === 'super_cape' || playerData.equipped.cape === 'wind_cape') {
+      ctx.fillStyle = playerData.equipped.cape === 'wind_cape'
+        ? 'rgba(33,150,243,0.8)'
+        : 'rgba(244,67,54,0.8)';
+      ctx.beginPath();
+      ctx.moveTo(bigfoot.x + bigfoot.width, bigfoot.y + 5);
+      ctx.lineTo(bigfoot.x + bigfoot.width + 18, bigfoot.y + 20);
+      ctx.lineTo(bigfoot.x + bigfoot.width, bigfoot.y + 35);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    if (playerData.equipped.floatie === 'floatie_duck') {
+      ctx.fillStyle = '#ffeb3b';
+      ctx.beginPath();
+      ctx.arc(bigfoot.x + bigfoot.width / 2, bigfoot.y + bigfoot.height - 4, 12, 0, Math.PI * 2);
+      ctx.strokeStyle = '#f57f17';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  function drawObjects() {
+    objects.forEach(o => {
+      if (o.kind === 'food') {
+        ctx.fillStyle = '#2e7d32';
+        ctx.fillRect(o.x, o.y, o.width, o.height);
+        ctx.fillStyle = '#c8e6c9';
+        ctx.font = '10px sans-serif';
+        ctx.fillText('🍔🍎🍫'.charAt(FOOD_TYPES.indexOf(o.type) % 3), o.x + 4, o.y + 16);
+      } else if (o.kind === 'hazard') {
+        ctx.fillStyle = '#c62828';
+        ctx.fillRect(o.x, o.y, o.width, o.height);
+        ctx.fillStyle = '#ffebee';
+        ctx.font = '9px sans-serif';
+        const symbol = {
+          campfire: '🔥',
+          lantern: '💡',
+          tent: '⛺',
+          flashlight: '🔦',
+          ranger: '👮'
+        }[o.type] || '!';
+        ctx.fillText(symbol, o.x + 3, o.y + 18);
+      } else if (o.kind === 'powerup') {
+        ctx.fillStyle = '#1565c0';
+        ctx.fillRect(o.x, o.y, o.width, o.height);
+        ctx.fillStyle = '#e3f2fd';
+        ctx.font = '10px sans-serif';
+        const symbol = {
+          shield: '🛡️',
+          magnet: '🧲',
+          speed: '⚡'
+        }[o.type] || 'P';
+        ctx.fillText(symbol, o.x + 2, o.y + 15);
+      }
+    });
+  }
+
+  function drawGameOverOverlay() {
+    if (!gameOver) return;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '28px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('BIGFOOT SPOTTED!', canvas.width / 2, canvas.height / 2 - 10);
+    ctx.font = '16px system-ui, sans-serif';
+    ctx.fillText('Press Restart or Space to play again', canvas.width / 2, canvas.height / 2 + 20);
+    ctx.textAlign = 'left';
+  }
+
+  function loop(timestamp) {
+    const delta = timestamp - lastTime;
+    lastTime = timestamp;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawBackground();
+    update(delta);
+    drawObjects();
+    drawBigfoot();
+    drawGameOverOverlay();
+
+    requestAnimationFrame(loop);
+  }
+
+  function jump() {
+    if (gameOver) {
+      resetGame();
+      return;
+    }
+    if (bigfoot.onGround) {
+      const hatPerk = getPerk(playerData.equipped.hat);
+      const capePerk = getPerk(playerData.equipped.cape);
+      const jumpBoost = hatPerk.jumpBoost || 1;
+      bigfoot.vy = JUMP_VELOCITY_BASE * jumpBoost;
+      bigfoot.onGround = false;
+      if (capePerk.slowFallAfterJump) {
+        slowFallTimer = 300;
+      }
+      updateDailyProgress('jump', 1);
+    }
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      e.preventDefault();
+      jump();
+    }
+  });
+
+  canvas.addEventListener('mousedown', jump);
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    jump();
+  }, { passive: false });
+
+  restartBtn.addEventListener('click', resetGame);
+
+  function renderShop() {
+    shopItemsEl.innerHTML = '';
+    shopItems.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'shop-item';
+
+      const top = document.createElement('div');
+      top.className = 'shop-top';
+
+      const left = document.createElement('span');
+      const owned = playerData.owned.includes(item.id);
+      const equipped = playerData.equipped[item.slot] === item.id;
+
+      left.textContent = `${item.name} (${item.slot}) - ${item.price} pts`;
+
+      const right = document.createElement('span');
+
+      if (!owned) {
+        const buyBtn = document.createElement('button');
+        buyBtn.textContent = 'Buy';
+        buyBtn.onclick = () => {
+          buyItem(item);
+          renderShop();
+        };
+        right.appendChild(buyBtn);
+      } else {
+        const equipBtn = document.createElement('button');
+        equipBtn.textContent = equipped ? 'Equipped' : 'Equip';
+        if (equipped) equipBtn.disabled = true;
+        equipBtn.onclick = () => {
+          equipItem(item.slot, item.id);
+          renderShop();
+        };
+        right.appendChild(equipBtn);
+      }
+
+      top.appendChild(left);
+      top.appendChild(right);
+
+      const desc = document.createElement('div');
+      desc.className = 'shop-desc';
+      desc.textContent = item.desc;
+
+      row.appendChild(top);
+      row.appendChild(desc);
+      shopItemsEl.appendChild(row);
+    });
+  }
+
+  function buyItem(item) {
+    if (playerData.points >= item.price && !playerData.owned.includes(item.id)) {
+      playerData.points -= item.price;
+      playerData.owned.push(item.id);
+      savePlayerData();
+    }
+  }
+
+  function equipItem(slot, id) {
+    if (playerData.owned.includes(id)) {
+      playerData.equipped[slot] = id;
+      savePlayerData();
+      applyEquippedPerks();
+    }
+  }
+
+  shopBtn.addEventListener('click', () => {
+    renderShop();
+    shopPanel.style.display = 'block';
+  });
+
+  shopClose.addEventListener('click', () => {
+    shopPanel.style.display = 'none';
+  });
+
+  goalsBtn.addEventListener('click', () => {
+    renderGoalsPanel();
+    goalsPanel.style.display = 'block';
+  });
+
+  goalsClose.addEventListener('click', () => {
+    goalsPanel.style.display = 'none';
+  });
+
+  loadDailyGoals();
+  resetGame();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
